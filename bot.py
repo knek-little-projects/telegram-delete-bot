@@ -37,7 +37,7 @@ timezone = dt.timezone(dt.timedelta(hours=TIME_ZONE_OFFSET))
 
 
 def now():
-    return dt.datetime.utcnow().astimezone(timezone)
+    return dt.datetime.now().astimezone(timezone)
 
 
 class DeleteQueue:
