@@ -2,8 +2,8 @@
 """
 Delete telegram messages at specified time unless the bot is stopped:
 1. Invite the bot to a channel
-2. Reply to a message with text: "delete dd.mm.yyyy hh:mm - hh:mm"
-3. The message will be deleted at [dd.mm.yyyy hh:mm - hh:mm]
+2. Reply to a message with text: "delete dd.mm.yyyy hh:mm"
+3. The message will be deleted at `dd.mm.yyyy hh:mm`
 4. Type "clear" to cancel all jobs
 5. Type "lock"/"unlock" to set a password to the "clear" command
 
@@ -29,9 +29,15 @@ TFMT = r"%H:%M"
 DATE_FMT = DFMT + " " + TFMT
 CRON_PERIOD_SEC = 1
 WAIT_BEFORE_DELETE_SYSTEM_MSG = 10
+TIME_ZONE_OFFSET = +3
 
-Job = namedtuple("Job", "date1 date2 chat_id message_id tag")
+Job = namedtuple("Job", "date chat_id message_id tag count")
 password = None
+timezone = dt.timezone(dt.timedelta(hours=TIME_ZONE_OFFSET))
+
+
+def now():
+    return dt.datetime.utcnow().astimezone(timezone)
 
 
 class DeleteQueue:
@@ -47,10 +53,14 @@ class DeleteQueue:
 
     def delete_message(self, job):
         self._jobs.discard(job)
-        try:
-            dispatcher.bot.delete_message(chat_id=job.chat_id, message_id=job.message_id)
-        except Exception as e:
-            logger.error(e)
+
+        for shift in range(job.count):
+            message_id = job.message_id - shift
+
+            try:
+                dispatcher.bot.delete_message(chat_id=job.chat_id, message_id=message_id)
+            except Exception as e:
+                logger.error(e)
 
     def remove_jobs(self):
         self._jobs.clear()
@@ -59,10 +69,10 @@ class DeleteQueue:
 def deleting_daemon():
     while True:
         for job in delete_queue:
-            if job.date1 is None or job.date2 is None:
+            if job.date is None:
                 pass
 
-            elif job.date1 <= dt.datetime.now() < job.date2:
+            elif job.date <= now():
                 pass
 
             else:
@@ -85,6 +95,12 @@ def handler(update, context):
         sent = context.bot.send_message(
             chat_id=chat_id,
             text="Queue:\n\n" + "\n\n".join(map(str, delete_queue)),
+        )
+
+    elif text == "lock" or text == "unlock":
+        sent = context.bot.send_message(
+            chat_id=chat_id,
+            text="Error: specify password"
         )
 
     elif text.startswith("lock "):
@@ -135,55 +151,59 @@ def handler(update, context):
 
             delete_queue.remove_jobs()
 
-    elif search := re.search(r"^delete (\d\d\.\d\d\.\d\d\d\d|today|tomorrow) (\d\d:\d\d)(?:-|\s)+(\d\d:\d\d)$", text):
-        attached_id = msg.reply_to_message.message_id
+    elif search := re.search(r"^delete\s+(?:last (\d+)\s+)?(\d\d\.\d\d\.\d\d\d\d|today|tomorrow) (\d\d:\d\d)$", text):
 
-        date, t1, t2 = search.groups()
+        count, date, time = search.groups()
+        count = count and int(count) or 1
 
         if date == "today":
-            date = dt.datetime.now().strftime(DFMT)
+            date = now().strftime(DFMT)
 
         elif date == "tomorrow":
-            date = (dt.datetime.now() + dt.timedelta(days=1)).strftime(DFMT)
+            date = (now() + dt.timedelta(days=1)).strftime(DFMT)
 
-        date1 = dt.datetime.strptime(date + " " + t1, DATE_FMT)
-        date2 = dt.datetime.strptime(date + " " + t2, DATE_FMT)
+        date = dt.datetime.strptime(date + " " + time, DATE_FMT)
+
+        attached_id = msg.reply_to_message.message_id
+
+        text = "Deleting attached message at %s" % date
+        if count > 1:
+            text += "\nand %d messages before it" % count
 
         sent = context.bot.send_message(
             chat_id=chat_id,
             reply_to_message_id=attached_id,
-            text="Deleting attached message at [%s .. %s]" % (date1, date2),
+            text=text,
         )
 
         delete_queue.add(Job(
-            date1,
-            date2,
+            date,
             chat_id,
             attached_id,
             None,
+            count,
         ))
 
     else:
         return
 
-    sys_date1 = dt.datetime.now() + dt.timedelta(seconds=WAIT_BEFORE_DELETE_SYSTEM_MSG)
-    sys_date2 = sys_date1 + dt.timedelta(days=1)
+    sys_date = now() + dt.timedelta(seconds=WAIT_BEFORE_DELETE_SYSTEM_MSG)
 
     delete_queue.add(Job(
-        sys_date1,
-        sys_date2,
+        sys_date,
         chat_id,
         msg.message_id,
-        "system"
+        "system",
+        1,
     ))
 
     if sent is not None:
         delete_queue.add(Job(
-            sys_date1,
-            sys_date2,
+            sys_date,
             chat_id,
             sent.message_id,
-            "system"
+            "system",
+            1,
         ))
 
 
