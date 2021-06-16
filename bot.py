@@ -162,7 +162,7 @@ def handler(update, context):
         elif date == "tomorrow":
             date = (now() + dt.timedelta(days=1)).strftime(DFMT)
 
-        date = dt.datetime.strptime(date + " " + time, DATE_FMT).astimezone(timezone)
+        date = dt.datetime.strptime(date + " " + time, DATE_FMT).replace(tzinfo=timezone)
 
         attached_id = msg.reply_to_message.message_id
 
